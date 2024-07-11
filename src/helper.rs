@@ -1,46 +1,25 @@
-// #[path = "./strategies/break_of_structure.rs"]
-// mod break_of_structure;
-#[path = "rusty_bot_models.rs"]
-mod rusty_bot_models;
-use std::env;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use dotenv::dotenv;
 use hmac::{Hmac, KeyInit, Mac};
 use http::Uri;
 use reqwest::RequestBuilder;
 use serde::Deserialize;
 use sha2::Sha512;
-use tokio::sync::{RwLock};
+use tokio::sync::RwLock;
 use tungstenite::client::IntoClientRequest;
+
 use crate::helper::rusty_bot_models::MarkPriceBucket;
-// use crate::rusty_bot_models::MarkPriceBucket;
 
-#[derive(Deserialize)]
-pub struct Config {
-    pub api_key: String,
-    pub api_secret: String,
-    pub market: String,
-    pub strategy: String,
-}
+#[path = "rusty_bot_models.rs"]
+mod rusty_bot_models;
 
-impl Config {
-    pub fn build() -> Result<Config, &'static str> {
-        let api_key = env::var("API_KEY").unwrap();
-        let api_secret = env::var("API_SECRET").unwrap();
-        let market = env::var("MARKET").unwrap();
-        let strategy  = env::var("STRATEGY").unwrap();
-        Ok(Config {
-            api_key,
-            api_secret,
-            market,
-            strategy
-        })
-    }
-}
-
-pub async fn execute_strategy(strategy: String, bucket_prices:  Vec<MarkPriceBucket>, asks: &Arc<RwLock<Vec<Vec<String>>>>, bids: &Arc<RwLock<Vec<Vec<String>>>>) {
+pub async fn execute_strategy(
+    strategy: String,
+    bucket_prices: Vec<MarkPriceBucket>,
+    asks: &Arc<RwLock<Vec<Vec<String>>>>,
+    bids: &Arc<RwLock<Vec<Vec<String>>>>,
+) {
     match strategy.as_str() {
         "break_of_structure" => {
             // break_of_structure::test_for_break_of_structure(bucket_prices, &asks, &bids).await;

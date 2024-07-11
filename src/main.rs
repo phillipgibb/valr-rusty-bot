@@ -3,6 +3,8 @@ extern crate valr_rusty_bot;
 mod test_sub_account;
 mod strategies;
 mod rusty_bot_models;
+mod config;
+
 use std::mem::replace;
 use std::str::FromStr;
 use std::string::String;
@@ -24,6 +26,7 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, tungstenite::Message, Web
 use tungstenite::http;
 use valr_rusty_bot::helper::{create_http_request, create_ws_request, execute_strategy, load_env};
 use rusty_bot_models::{AggregatedOrderBookUpdate, BalanceUpdate, DepthOrderBookSnapshot, MarkPriceBucket, Order, OrderBookData, TradePriceBucketUpdate, WebsocketMessage};
+use crate::config::{ConfigProvider, DotEnvConfigProvider};
 
 
 const DEFAULT_PAIR: &str = "BTCZAR";
@@ -39,7 +42,9 @@ lazy_static! {
 #[tokio::main]
 async fn main() {
     println!("Hello, VALR Rusty Trader!");
-    let config = load_env();
+    // let config = load_env();
+    let env_config_provider = DotEnvConfigProvider::new();
+    let config = env_config_provider.get_config();
     env_logger::init();
     let current_date_time = Utc::now().naive_utc();
     let one_hour_ago_date_time = current_date_time - Duration::hours(1);
