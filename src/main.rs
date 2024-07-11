@@ -24,12 +24,10 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, tungstenite::Message, WebSocketStream};
 use tungstenite::http;
-use valr_rusty_bot::helper::{create_http_request, create_ws_request, execute_strategy, load_env};
+use valr_rusty_bot::helper::{create_http_request, create_ws_request, execute_strategy};
 use rusty_bot_models::{AggregatedOrderBookUpdate, BalanceUpdate, DepthOrderBookSnapshot, MarkPriceBucket, Order, OrderBookData, TradePriceBucketUpdate, WebsocketMessage};
 use crate::config::{ConfigProvider, DotEnvConfigProvider};
 
-
-const DEFAULT_PAIR: &str = "BTCZAR";
 const FIVE_MINUTE_BUCKET_SECONDS: &str = "300";
 
 lazy_static! {
@@ -96,8 +94,8 @@ async fn subscribe_to_account_updates(
         url.unwrap(),
         api_key,
         api_secret,
-        String::from("/ws/account"),
-        String::from("GET"),
+        "/ws/account",
+        "GET",
         None,
     );
     let (ws_stream, _) = connect_async(request)
@@ -155,8 +153,8 @@ async fn subscribe_to_trade_updates(
         url.unwrap(),
         api_key,
         api_secret,
-        String::from("/ws/trade"),
-        String::from("GET"),
+        "/ws/trade",
+        "GET",
         None,
     );
     let (ws_stream, _) = connect_async(request)
@@ -430,13 +428,13 @@ async fn handle_trade_price_bucket_update(trade_price_bucket_update: TradePriceB
             }
         }
     }).await.expect("The spawned task has panicked");
-
-    tokio::spawn(async move {
-        // While main has an active read lock, we acquire one too.
-        let bpr = &c_lock.read().await;
-        //TODO: find out why the compiler is mistaken thinking the  arguments to this function are incorrect when they are not
-        execute_strategy(strategy, bpr.to_vec(), &ASKS, &BIDS).await;
-    });
+    //
+    // tokio::spawn(async move {
+    //     // While main has an active read lock, we acquire one too.
+    //     let bpr = &c_lock.read().await;
+    //     //TODO: find out why the compiler is mistaken thinking the  arguments to this function are incorrect when they are not
+    //     execute_strategy(strategy, bpr.to_vec(), &ASKS, &BIDS).await;
+    // });
 }
 
 fn create_mark_price_bucket(trade_price_bucket_update: TradePriceBucketUpdate) -> MarkPriceBucket {
@@ -538,8 +536,8 @@ async fn get_open_orders_for_pair(
         request_url,
         api_key,
         api_secret,
-        String::from("/v1/orders/open"),
-        &String::from("GET"),
+        "/v1/orders/open",
+        "GET",
         None,
     )
     .send()

@@ -23,18 +23,11 @@ pub async fn execute_strategy(
     match strategy.as_str() {
         "break_of_structure" => {
             // break_of_structure::test_for_break_of_structure(bucket_prices, &asks, &bids).await;
-        },
+        }
         _ => {
             println!("Strategy {} not supported", strategy)
         }
     }
-}
-
-pub fn load_env() -> Config {
-    println!("Loading .env variables!!");
-    dotenv().ok();
-    envy::from_env::<Config>()
-        .expect("Please provide API env vars")
 }
 
 pub fn strip_slashes(s: &str) -> Option<String> {
@@ -49,38 +42,77 @@ pub fn strip_slashes(s: &str) -> Option<String> {
     Some(n)
 }
 
-pub fn create_ws_request(url: Uri, api_key: &String, api_secret: &String, path: String, verb: String, body: Option<String>) -> tungstenite::handshake::client::Request {
-    let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis();
-    let sig = api_sign(api_secret.as_bytes(), timestamp.to_string(), &verb, path, Option::from(body));
+pub fn create_ws_request(
+    url: Uri,
+    api_key: &str,
+    api_secret: &str,
+    path: &str,
+    verb: &str,
+    body: Option<String>,
+) -> tungstenite::handshake::client::Request {
+    let timestamp = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let sig = api_sign(
+        api_secret.as_bytes(),
+        timestamp.to_string(),
+        verb,
+        path,
+        body,
+    );
     let mut request = IntoClientRequest::into_client_request(url).unwrap();
     let headers = request.headers_mut();
     headers.insert("X-VALR-API-KEY", api_key.parse().unwrap());
     headers.insert("X-VALR-SIGNATURE", sig.parse().unwrap());
-    headers.insert("X-VALR-TIMESTAMP", format!("{}", &timestamp).parse().unwrap());
+    headers.insert(
+        "X-VALR-TIMESTAMP",
+        format!("{}", &timestamp).parse().unwrap(),
+    );
     headers.insert("X-VALR-API-KEY", api_key.parse().unwrap());
     headers.insert("X-VALR-SIGNATURE", sig.parse().unwrap());
-    headers.insert("X-VALR-TIMESTAMP", format!("{}", &timestamp).parse().unwrap());
+    headers.insert(
+        "X-VALR-TIMESTAMP",
+        format!("{}", &timestamp).parse().unwrap(),
+    );
     request
 }
 
-pub fn create_http_request(url: String, api_key: &String, api_secret: &String, path: String, verb: &String, body: Option<String>) -> RequestBuilder {
-    let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis();
-    let sig = api_sign(api_secret.as_bytes(), timestamp.to_string(), verb, path, body.clone());
+pub fn create_http_request(
+    url: String,
+    api_key: &str,
+    api_secret: &str,
+    path: &str,
+    verb: &str,
+    body: Option<String>,
+) -> RequestBuilder {
+    let timestamp = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let sig = api_sign(
+        api_secret.as_bytes(),
+        timestamp.to_string(),
+        verb,
+        path,
+        body.clone(),
+    );
     let client = reqwest::Client::new();
-    let request_builder = match verb.clone().as_str() {
+    let request_builder = match verb {
         "GET" => client.get(url),
         "POST" => client.post(url).body(body.unwrap().clone()),
         "PUT" => client.put(url).body(body.unwrap().clone()),
         "DELETE" => client.delete(url).body(body.unwrap().clone()),
-        _ => panic!("Verb: {} not supported", verb)
+        _ => panic!("Verb: {} not supported", verb),
     };
 
-    request_builder.header("X-VALR-API-KEY", api_key.clone())
-    .header("X-VALR-SIGNATURE", sig.clone())
-    .header("X-VALR-TIMESTAMP", format!("{}", &timestamp).clone())
-    .header("X-VALR-API-KEY", api_key.clone())
-    .header("X-VALR-SIGNATURE", sig.clone())
-    .header("X-VALR-TIMESTAMP", format!("{}", timestamp.clone()))
+    request_builder
+        .header("X-VALR-API-KEY", api_key)
+        .header("X-VALR-SIGNATURE", sig.clone())
+        .header("X-VALR-TIMESTAMP", format!("{}", &timestamp).clone())
+        .header("X-VALR-API-KEY", api_key)
+        .header("X-VALR-SIGNATURE", sig.clone())
+        .header("X-VALR-TIMESTAMP", format!("{}", timestamp.clone()))
 }
 //
 // pub fn create_http_post(url: String, api_key: &String, api_secret: &String, path: String, body: String) -> RequestBuilder {
@@ -113,13 +145,21 @@ pub fn create_http_request(url: String, api_key: &String, api_secret: &String, p
 //         .header("Content-Type", "json")
 // }
 
-pub fn api_sign(secret: &[u8], timestamp: String, verb: &String, path: String, data: Option<String>) -> String {
+pub fn api_sign(
+    secret: &[u8],
+    timestamp: String,
+    verb: &str,
+    path: &str,
+    data: Option<String>,
+) -> String {
     let mut mac = Hmac::<Sha512>::new_from_slice(secret).unwrap();
     mac.update(&timestamp.into_bytes());
-    mac.update(&*verb.clone().into_bytes());
-    mac.update(&path.into_bytes());
-    if data.is_some() { mac.update(&data.unwrap().into_bytes()) }
-    let result = mac.finalize();
-    format!("{}", hex::encode(result.into_bytes()))
-}
+    mac.update(verb.as_bytes());
+    mac.update(path.as_bytes());
+    if let Some(d) = data {
+        mac.update(d.as_bytes())
+    }
 
+    let result = mac.finalize();
+    hex::encode(result.into_bytes()).to_string()
+}
