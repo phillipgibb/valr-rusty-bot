@@ -1,6 +1,6 @@
 #![allow(unused_variables)]
 extern crate valr_rusty_bot;
-mod test_sub_account;
+mod tests;
 mod strategies;
 mod rusty_bot_models;
 mod config;

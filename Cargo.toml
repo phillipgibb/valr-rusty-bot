@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [[strategies]]
+[[tests]]
 
 [dependencies]
 dotenv = "0.15.0"

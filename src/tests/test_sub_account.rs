@@ -7,14 +7,14 @@ mod tests {
     use futures_util::TryFutureExt;
     use log::error;
     use serde_json::{json, Value};
-
-    use valr_rusty_bot::{create_http_request, load_env};
-
+    use valr_rusty_bot::helper::{create_http_request};
+    use crate::config::{ConfigProvider, DotEnvConfigProvider};
     use crate::rusty_bot_models::SubAccountResponse;
 
     #[tokio::test]
     async fn create_sub_account() -> Result<(), reqwest::Error> {
-        let config = load_env();
+        let env_config_provider = DotEnvConfigProvider::new();
+        let config = env_config_provider.get_config();
         let request_url = String::from("https://api.valr.com/v1/account/subaccount");
 
         let msg = json!({
@@ -25,8 +25,8 @@ mod tests {
             request_url,
             &config.api_key,
             &config.api_secret,
-            String::from("/v1/account/subaccount"),
-            &String::from("POST"),
+            "/v1/account/subaccount",
+            "POST",
             Option::from(msg.to_string()),
         ).send().await;
 
@@ -55,7 +55,8 @@ mod tests {
     }
 
     async fn delete_sub_account(id: i64) -> Result<(), reqwest::Error> {
-        let config = load_env();
+        let env_config_provider = DotEnvConfigProvider::new();
+        let config = env_config_provider.get_config();
         let request_url = String::from("https://api.valr.com/v1/account/subaccount");
         let msg = json!({
             "subAccountPublicId": id
@@ -65,8 +66,8 @@ mod tests {
             request_url,
             &config.api_key,
             &config.api_secret,
-            String::from("/v1/account/subaccount"),
-            &String::from("DELETE"),
+            "/v1/account/subaccount",
+            "DELETE",
             Option::from(msg.to_string()),
         )
             .send()
