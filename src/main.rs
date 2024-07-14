@@ -226,27 +226,66 @@ fn create_ping_thread(
     })
 }
 
-async fn handle_trade_ws_incoming_messages(
+async fn handle_ws_incoming_messages(
     mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     strategy: String,
+    subscription_type: &str,
 ) {
     while let Some(message) = read.next().await {
         match message {
             Ok(Message::Text(text)) => {
-                let serialized = serde_json::from_slice::<WebsocketMessage>(&text.into_bytes());
-                match serialized {
-                    Ok(serialized) => match serialized.data {
-                        None => {
-                            let current_time = Utc::now();
+                let ws_message = serde_json::from_str::<WsMessage>(text.as_str());
+                let current_time = Utc::now();
+                match ws_message {
+                    Ok(serialized) => match serialized {
+                        WsMessage::BalanceUpdate(balance_update) => {
+                            handle_balance_update(*balance_update)
+                        }
+                        WsMessage::OpenOrdersUpdate(order_update) => {
+                            handle_order_update(order_update)
+                        }
+                        WsMessage::NewTradeBucket(trade_price_bucket_update) => {
+                            handle_trade_price_bucket_update(
+                                *trade_price_bucket_update,
+                                strategy.clone(),
+                            )
+                            .await;
+                        }
+                        WsMessage::OrderbookLvOneDepthOneSnapshot(ob) => {}
+                        WsMessage::OrderbookLvOneDepthTenSnapshot(ob) => {}
+                        WsMessage::Subscribed => {
+                            println!("{}| Subscribed {}", current_time.to_rfc3339().blue(), text.green())
+                        }
+                        WsMessage::Authenticated => {
+                            println!("{}| Authenticated", current_time.to_rfc3339().blue())
+                        }
+                        WsMessage::Unsupported => {
                             println!(
-                                "{}| Trade WS message {}",
+                                "{}| Unsupported {} {}",
                                 current_time.to_rfc3339().blue(),
-                                serialized.r#type.yellow()
+                                subscription_type,
+                                text
                             )
                         }
-                        Some(data) => handle_websocket_message(serialized.r#type, data, strategy.clone()).await,
+                        WsMessage::Pong => {
+                            println!(
+                                "{}| {} {} message Pong",
+                                current_time.to_rfc3339().blue(),
+                                subscription_type.to_case(Case::Snake).green(),
+                                "WS".green()
+                            )
+                        }
                     },
-                    Err(e) => error!("Error reading WebSocket message: {}", e),
+                    Err(e) => {
+                        let current_time = Utc::now();
+                        println!(
+                            "{}| {} {} message {}",
+                            current_time.to_rfc3339().blue(),
+                            subscription_type.to_case(Case::Snake).green(),
+                            "WS".green(),
+                            e.to_string().red()
+                        )
+                    }
                 }
             }
             Ok(t) => error!(
@@ -255,77 +294,6 @@ async fn handle_trade_ws_incoming_messages(
             ), // Ignore non-Text messages
             Err(e) => error!("Error during the Trade WebSocket communication: {}", e),
         }
-    }
-}
-
-async fn handle_account_ws_incoming_messages(
-    mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-    strategy: String,
-) {
-    while let Some(message) = read.next().await {
-        match message {
-            Ok(Message::Text(text)) => {
-                let serialized = serde_json::from_slice::<WebsocketMessage>(&text.into_bytes());
-                match serialized {
-                    Ok(serialized) => match serialized.data {
-                        None => {
-                            let current_time = Utc::now();
-                            println!(
-                                "{}| Account WS message {}",
-                                current_time.to_rfc3339().blue(),
-                                serialized.r#type.yellow()
-                            )
-                        }
-                        Some(data) => handle_websocket_message(serialized.r#type, data, strategy.clone()).await,
-                    },
-                    Err(e) => error!("Error reading WebSocket message: {}", e),
-                }
-            }
-            Ok(t) => error!(
-                "Unexpected Message during the WebSocket communication: {}",
-                t
-            ), // Ignore non-Text messages
-            Err(e) => error!("Error during the Account WebSocket communication: {}", e),
-        }
-    }
-}
-
-async fn handle_websocket_message(websocket_type: String, data: Value, strategy: String) {
-    if websocket_type == "BALANCE_UPDATE" {
-        let balance_update =
-            serde_json::from_str::<BalanceUpdate>(data.to_string().as_str()).unwrap();
-        handle_balance_update(balance_update)
-    } else if websocket_type == "OPEN_ORDERS_UPDATE" {
-        let order_update = serde_json::from_str::<Vec<Order>>(data.to_string().as_str()).unwrap();
-        handle_order_update(order_update)
-    } else if (websocket_type == "FULL_ORDERBOOK_UPDATE")
-        | (websocket_type == "FULL_ORDERBOOK_SNAPSHOT")
-    {
-        let orderbook_snapshot =
-            serde_json::from_str::<OrderBookData>(data.to_string().as_str()).unwrap();
-        // handle_orderbook_snapshot(orderbook_snapshot)
-    } else if websocket_type == "AGGREGATED_ORDERBOOK_UPDATE" {
-        let aggregated_orderbook_update =
-            serde_json::from_str::<AggregatedOrderBookUpdate>(data.to_string().as_str()).unwrap();
-        // handle_aggregated_orderbook_update(aggregated_orderbook_update)
-    } else if websocket_type == "NEW_TRADE_BUCKET" {
-        let trade_price_bucket_update =
-            serde_json::from_str::<TradePriceBucketUpdate>(data.to_string().as_str()).unwrap();
-        handle_trade_price_bucket_update(trade_price_bucket_update, strategy).await;
-    } else if websocket_type == "NEW_TRADE" {
-        let trade_update = data.to_string();
-        println!("{}", trade_update)
-        // handle_trade_update(trade_update).await;
-    } else if websocket_type == "ORDER_STATUS_UPDATE" {
-        let order_status_update = data.to_string();
-        println!();
-        println!("ORDER_STATUS_UPDATE: {}", order_status_update);
-        println!();
-        // handle_trade_update(trade_update).await;
-    } else if websocket_type == "OB_L1_D10_SNAPSHOT" {
-        let orderbook_level_1_depth_1_snapshot =
-            serde_json::from_str::<DepthOrderBookSnapshot>(data.to_string().as_str()).unwrap();
-        handle_orderbook_level_1_depth_1_snapshot_update(orderbook_level_1_depth_1_snapshot).await;
     }
 }
 
@@ -357,7 +325,10 @@ async fn handle_orderbook_level_1_depth_1_snapshot_update(orderbook_data: DepthO
     drop(bids_writer);
 }
 
-async fn handle_trade_price_bucket_update(trade_price_bucket_update: TradePriceBucketUpdate, strategy: String) {
+async fn handle_trade_price_bucket_update(
+    trade_price_bucket_update: TradePriceBucketUpdate,
+    strategy: String,
+) {
     if trade_price_bucket_update.bucket_period_in_seconds != 60 {
         //300
         return;
@@ -559,8 +530,3 @@ async fn get_open_orders_for_pair(
     drop(orders_writer);
     Ok(())
 }
-
-
-
-
-

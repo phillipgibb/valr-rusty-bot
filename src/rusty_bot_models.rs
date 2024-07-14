@@ -1,11 +1,47 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_with::{DisplayFromStr, serde_as};
 
+#[derive(Deserialize, Debug)]
+#[serde(tag="type")]
+pub enum WsMessage {
+    #[serde(rename = "BALANCE_UPDATE", deserialize_with = "ws_deserializer")]
+    BalanceUpdate(Box<BalanceUpdate>),
+    #[serde(rename = "OPEN_ORDERS_UPDATE", deserialize_with = "ws_deserializer")]
+    OpenOrdersUpdate(Vec<Order>),
+    #[serde(rename = "NEW_TRADE_BUCKET", deserialize_with = "ws_deserializer")]
+    NewTradeBucket(Box<TradePriceBucketUpdate>),
+    #[serde(rename = "OB_L1_D1_SNAPSHOT", deserialize_with = "ws_deserializer")]
+    OrderbookLvOneDepthOneSnapshot(Box<DepthOrderBookSnapshot>),
+    #[serde(rename = "OB_L1_D10_SNAPSHOT", deserialize_with = "ws_deserializer")]
+    OrderbookLvOneDepthTenSnapshot(Box<DepthOrderBookSnapshot>),
+    #[serde(rename = "AUTHENTICATED")]
+    Authenticated,
+    #[serde(rename = "SUBSCRIBED")]
+    Subscribed,
+    #[serde(rename = "PONG")]
+    Pong,
+    #[serde(rename = "UNSUPPORTED")]
+    Unsupported
+}
+
+fn ws_deserializer<'de, D, T: Deserialize<'de>>(deserializer: D) -> Result<T, D::Error>
+    where
+        D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    struct WsMessage<T> {
+        #[serde(alias = "d")]
+        data: T
+    }
+    let d = WsMessage::deserialize(deserializer)?.data;
+    Ok(d)
+}
+
 #[serde_as]
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, PartialEq, PartialOrd)]
 pub struct MarkPriceBucket {
     #[serde(rename = "currencyPairSymbol")]
     pub currency_pair_symbol: String,
@@ -14,13 +50,13 @@ pub struct MarkPriceBucket {
     #[serde(rename = "startTime")]
     pub start_time: String,
     #[serde_as(as = "DisplayFromStr")]
-    pub open: i32,
+    pub open: f64,
     #[serde_as(as = "DisplayFromStr")]
-    pub high: i32,
+    pub high: f64,
     #[serde_as(as = "DisplayFromStr")]
-    pub low: i32,
+    pub low: f64,
     #[serde_as(as = "DisplayFromStr")]
-    pub close: i32,
+    pub close: f64,
 }
 
 
@@ -108,7 +144,8 @@ pub struct AggregatedOrderBookUpdate {
     pub bids: Vec<OrderBookEntry>,
 }
 
-#[derive(Deserialize, Debug)]
+#[serde_as]
+#[derive(Deserialize, Debug, PartialEq, PartialOrd)]
 pub struct TradePriceBucketUpdate {
     #[serde(rename = "currencyPairSymbol")]
     pub currency_pair_symbol: String,
@@ -116,13 +153,19 @@ pub struct TradePriceBucketUpdate {
     pub bucket_period_in_seconds: u16,
     #[serde(rename = "startTime")]
     pub start_time: String,
-    pub open: String,
-    pub high: String,
-    pub low: String,
-    pub close: String,
-    pub volume: String,
+    #[serde_as(as = "DisplayFromStr")]
+    pub open: f64,
+    #[serde_as(as = "DisplayFromStr")]
+    pub high: f64,
+    #[serde_as(as = "DisplayFromStr")]
+    pub low: f64,
+    #[serde_as(as = "DisplayFromStr")]
+    pub close: f64,
+    #[serde_as(as = "DisplayFromStr")]
+    pub volume: f64,
     #[serde(rename = "quoteVolume")]
-    pub quote_volume: String,
+    #[serde_as(as = "DisplayFromStr")]
+    pub quote_volume: f64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
