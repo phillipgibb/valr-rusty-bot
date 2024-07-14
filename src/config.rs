@@ -1,7 +1,8 @@
+use std::ops::Deref;
+
 pub trait ConfigProvider {
     fn get_config(&self) -> &Config;
 }
-#[derive(Debug, Default)]
 pub struct Config {
     pub api_key: String,
     pub api_secret: String,
@@ -16,11 +17,16 @@ impl DotEnvConfigProvider {
         use dotenv::dotenv;
         use std::env;
         dotenv().ok();
+        let api_key = env::var("API_KEY").expect("Missing API_KEY");
+        let api_secret = env::var("API_SECRET").expect("Missing API_SECRET");
+        let market = env::var("MARKET").expect("Missing MARKET");
+        let strategy = env::var("STRATEGY").expect("Missing STRATEGY");
+        
         let config = Config {
-             api_key: env::var("API_KEY").expect("Missing API_KEY"),
-             api_secret : env::var("API_SECRET").expect("Missing API_SECRET"),
-             market: env::var("MARKET").expect("Missing MARKET"),
-             strategy: env::var("STRATEGY").expect("Missing STRATEGY")
+             api_key,
+             api_secret,
+             market,
+             strategy
         };
 
         DotEnvConfigProvider(config)

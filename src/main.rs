@@ -1,32 +1,38 @@
 #![allow(unused_variables)]
-extern crate valr_rusty_bot;
-mod tests;
-mod strategies;
-mod rusty_bot_models;
-mod config;
 
+mod config;
+mod rusty_bot_models;
+mod strategies;
+mod tests;
+
+use crate::config::{ConfigProvider, DotEnvConfigProvider};
+use crate::rusty_bot_models::WsMessage;
+use crate::strategies::break_of_structure::helper::{
+    create_http_request, create_ws_request, execute_strategy,
+};
+use chrono::{DateTime, Duration, Utc};
+use colored::Colorize;
+use convert_case::{Case, Casing};
+use futures_util::future::try_join_all;
+use futures_util::stream::{SplitSink, SplitStream};
+use futures_util::{SinkExt, StreamExt};
+use http::Uri;
+use lazy_static::lazy_static;
+use log::{error, warn};
+use rusty_bot_models::{
+    AggregatedOrderBookUpdate, BalanceUpdate, DepthOrderBookSnapshot, MarkPriceBucket, Order,
+    OrderBookData, TradePriceBucketUpdate,
+};
+use serde_json::json;
 use std::mem::replace;
 use std::str::FromStr;
 use std::string::String;
 use std::sync::Arc;
-
-use chrono::{DateTime, Duration, Utc};
-use colored::{Colorize};
-use futures_util::{SinkExt, StreamExt};
-use futures_util::future::{try_join_all};
-use futures_util::stream::{SplitSink, SplitStream};
-use http::Uri;
-use lazy_static::lazy_static;
-use log::{error, warn};
-use serde_json::{json, Value};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, tungstenite::Message, WebSocketStream};
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tungstenite::http;
-use valr_rusty_bot::helper::{create_http_request, create_ws_request, execute_strategy};
-use rusty_bot_models::{AggregatedOrderBookUpdate, BalanceUpdate, DepthOrderBookSnapshot, MarkPriceBucket, Order, OrderBookData, TradePriceBucketUpdate, WebsocketMessage};
-use crate::config::{ConfigProvider, DotEnvConfigProvider};
 
 const FIVE_MINUTE_BUCKET_SECONDS: &str = "300";
 
@@ -40,7 +46,6 @@ lazy_static! {
 #[tokio::main]
 async fn main() {
     println!("Hello, VALR Rusty Trader!");
-    // let config = load_env();
     let env_config_provider = DotEnvConfigProvider::new();
     let config = env_config_provider.get_config();
     env_logger::init();
@@ -56,39 +61,30 @@ async fn main() {
     // get_open_orders_for_pair(&config.api_key, &config.api_secret, &config.market).await.expect("Error getting open orders");
 
     let mut handles = vec![];
-    let mut trade_update_read_handles =
-        subscribe_to_trade_updates(&config.api_key, &config.api_secret, &config.market, &config.strategy).await;
+    let mut trade_update_read_handles = subscribe_to_trade_updates(
+        &config.api_key,
+        &config.api_secret,
+        &config.market,
+        config.strategy.clone(),
+    )
+    .await;
     let mut account_handlers =
-        subscribe_to_account_updates(&config.api_key, &config.api_secret, &config.strategy).await;
+        subscribe_to_account_updates(&config.api_key, &config.api_secret, config.strategy.clone())
+            .await;
     handles.append(&mut trade_update_read_handles);
     handles.append(&mut account_handlers);
 
-    try_join_all(handles.into_iter()).await.expect("Failure joining tasks");
-    // handles
-    //     .into_iter()
-    //     .collect::<TryJoinAll<_>>()
-    //     .await
-    //     .expect("TODO: panic message");
+    try_join_all(handles.into_iter())
+        .await
+        .expect("Failure joining tasks");
 }
 
 async fn subscribe_to_account_updates(
-    api_key: &String,
-    api_secret: &String,
-    strategy: &String,
+    api_key: &str,
+    api_secret: &str,
+    strategy: String,
 ) -> Vec<JoinHandle<()>> {
     let url = Uri::from_str("wss://api.valr.com/ws/account");
-    let message = json!(
-        {
-        "type": "SUBSCRIBE",
-        "subscriptions": [
-            {
-                "event": "BALANCE_UPDATE"
-            },
-            {
-                "event": "OPEN_ORDERS_UPDATE"
-            },
-        ]
-    });
 
     let request = create_ws_request(
         url.unwrap(),
@@ -101,22 +97,19 @@ async fn subscribe_to_account_updates(
     let (ws_stream, _) = connect_async(request)
         .await
         .expect("Error connecting to Account WebSocket");
-    let (mut write, read) = ws_stream.split();
-    write
-        .send(Message::from(message.to_string()))
-        .await
-        .expect("Failed to send message");
-    let account_handle = tokio::spawn(handle_account_ws_incoming_messages(read, strategy.clone()));
+    let (write, read) = ws_stream.split();
+
+    let account_handle = tokio::spawn(handle_ws_incoming_messages(read, strategy, "account"));
     let ping_handle = create_ping_thread(write, Utc::now(), String::from("Account WS"));
 
     vec![account_handle, ping_handle]
 }
 
 async fn subscribe_to_trade_updates(
-    api_key: &String,
-    api_secret: &String,
-    pair_symbol: &String,
-    strategy: &String,
+    api_key: &str,
+    api_secret: &str,
+    pair_symbol: &str,
+    strategy: String,
 ) -> Vec<JoinHandle<()>> {
     let url = Uri::from_str("wss://api.valr.com/ws/trade");
     let message = json!(
@@ -149,43 +142,20 @@ async fn subscribe_to_trade_updates(
         ]
     });
 
-    let request = create_ws_request(
-        url.unwrap(),
-        api_key,
-        api_secret,
-        "/ws/trade",
-        "GET",
-        None,
-    );
+    let request = create_ws_request(url.unwrap(), api_key, api_secret, "/ws/trade", "GET", None);
     let (ws_stream, _) = connect_async(request)
         .await
         .expect("Error connecting to Trade WebSocket");
 
     let (mut write, read) = ws_stream.split();
-    let subscribe_handle = tokio::spawn(handle_trade_ws_incoming_messages(read, strategy.clone()));
+    let subscribe_handle = tokio::spawn(handle_ws_incoming_messages(read, strategy, "trade"));
 
     write
         .send(Message::from(message.to_string()))
         .await
         .expect("Failed to send message");
-    // let mut current_time = Instant::now();
 
     let ping_handle = create_ping_thread(write, Utc::now(), String::from("Trade   WS"));
-
-    // let bos_handler = tokio::spawn(async move {
-    //     loop {
-    //         let now = Instant::now();
-    //         match now.checked_duration_since(current_time) {
-    //             Some(dur) => {
-    //                 if dur.as_secs() == tokio::time::Duration::from_secs(60).as_secs() {//*15
-    //                     current_time = Instant::now();
-    //                     test_for_break_of_structure().await;
-    //                 }
-    //             }
-    //             None => {}
-    //         };
-    //     }
-    // });
     vec![subscribe_handle, ping_handle]
 }
 
@@ -206,7 +176,7 @@ fn create_ping_thread(
                 });
 
                 match write
-                    .send(Message::from(String::from(ping_message.to_string())))
+                    .send(Message::from(ping_message.to_string()))
                     .await
                 {
                     Ok(i) => {
@@ -341,32 +311,33 @@ async fn handle_trade_price_bucket_update(
 
     tokio::spawn(async move {
         // While main has an active read lock, we acquire one too.
-        let bpr = c_lock.read().await;
+        let bpr = BUCKET_PRICES.read().await;
         let position = {
             bpr.iter()
                 .position(|b| b.start_time == trade_price_bucket_update.start_time)
         };
 
         let last_position = bpr.iter().last().unwrap();
-        let close_direction = if last_position.close < trade_price_bucket_update.close.parse().unwrap() {
+
+        let close_direction = if last_position.close < trade_price_bucket_update.close {
             up_arrow.green()
-        } else if last_position.close > trade_price_bucket_update.close.parse().unwrap() {
+        } else if last_position.close > trade_price_bucket_update.close {
             down_arrow.red()
         } else {
             circle.white()
         };
 
-        let high_direction = if last_position.high < trade_price_bucket_update.high.parse().unwrap() {
+        let high_direction = if last_position.high < trade_price_bucket_update.high {
             up_arrow.green()
-        } else if last_position.high > trade_price_bucket_update.high.parse().unwrap() {
+        } else if last_position.high > trade_price_bucket_update.high {
             down_arrow.red()
         } else {
             circle.white()
         };
 
-        let low_direction = if last_position.low < trade_price_bucket_update.low.parse().unwrap() {
+        let low_direction = if last_position.low < trade_price_bucket_update.low {
             up_arrow.green()
-        } else if last_position.low > trade_price_bucket_update.low.parse().unwrap() {
+        } else if last_position.low > trade_price_bucket_update.low {
             down_arrow.red()
         } else {
             circle.white()
@@ -376,11 +347,11 @@ async fn handle_trade_price_bucket_update(
             "{} for {} received. CLOSE: {}{} , HIGH: {}{} , LOW: {}{} , start_time: {}",
             "Trade Price Bucket Update".on_bright_blue(),
             trade_price_bucket_update.currency_pair_symbol.green(),
-            trade_price_bucket_update.close.yellow(),
+            trade_price_bucket_update.close.to_string().yellow(),
             close_direction,
-            trade_price_bucket_update.high.yellow(),
+            trade_price_bucket_update.high.to_string().yellow(),
             high_direction,
-            trade_price_bucket_update.low.yellow(),
+            trade_price_bucket_update.low.to_string().yellow(),
             low_direction,
             trade_price_bucket_update.start_time.blue()
         );
@@ -398,14 +369,16 @@ async fn handle_trade_price_bucket_update(
                 let _ = replace(&mut bpw[position.unwrap()], mpb);
             }
         }
-    }).await.expect("The spawned task has panicked");
-    //
-    // tokio::spawn(async move {
-    //     // While main has an active read lock, we acquire one too.
-    //     let bpr = &c_lock.read().await;
-    //     //TODO: find out why the compiler is mistaken thinking the  arguments to this function are incorrect when they are not
-    //     execute_strategy(strategy, bpr.to_vec(), &ASKS, &BIDS).await;
-    // });
+    })
+    .await
+    .expect("The spawned task has panicked");
+    tokio::spawn(async move {
+        // While main has an active read lock, we acquire one too.
+        // let bpr = &c_lock.read().await;
+        let bpr = BUCKET_PRICES.read().await;
+
+        execute_strategy(strategy.clone().as_str(), bpr.to_vec(), &ASKS, &BIDS).await;
+    });
 }
 
 fn create_mark_price_bucket(trade_price_bucket_update: TradePriceBucketUpdate) -> MarkPriceBucket {
@@ -413,10 +386,10 @@ fn create_mark_price_bucket(trade_price_bucket_update: TradePriceBucketUpdate) -
         currency_pair_symbol: trade_price_bucket_update.currency_pair_symbol,
         bucket_period_in_seconds: trade_price_bucket_update.bucket_period_in_seconds,
         start_time: trade_price_bucket_update.start_time,
-        open: trade_price_bucket_update.open.parse().unwrap(),
-        high: trade_price_bucket_update.high.parse().unwrap(),
-        low: trade_price_bucket_update.low.parse().unwrap(),
-        close: trade_price_bucket_update.close.parse().unwrap(),
+        open: trade_price_bucket_update.open,
+        high: trade_price_bucket_update.high,
+        low: trade_price_bucket_update.low,
+        close: trade_price_bucket_update.close,
     }
 }
 
@@ -498,8 +471,8 @@ async fn get_historical_sixty_second_mark_price_buckets_for_pair(
 //Not necessary because the first subscription always returns all the open orders
 //but leaving as an example
 async fn get_open_orders_for_pair(
-    api_key: &String,
-    api_secret: &String,
+    api_key: &str,
+    api_secret: &str,
     currency_pair: &String,
 ) -> Result<(), reqwest::Error> {
     let request_url = String::from("https://api.valr.com/v1/orders/open");

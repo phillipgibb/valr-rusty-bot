@@ -4,25 +4,22 @@ use std::time::SystemTime;
 use hmac::{Hmac, KeyInit, Mac};
 use http::Uri;
 use reqwest::RequestBuilder;
-use serde::Deserialize;
 use sha2::Sha512;
 use tokio::sync::RwLock;
 use tungstenite::client::IntoClientRequest;
+use crate::rusty_bot_models::MarkPriceBucket;
 
-use crate::helper::rusty_bot_models::MarkPriceBucket;
-
-#[path = "rusty_bot_models.rs"]
-mod rusty_bot_models;
+use crate::strategies::break_of_structure;
 
 pub async fn execute_strategy(
-    strategy: String,
+    strategy: &str,
     bucket_prices: Vec<MarkPriceBucket>,
     asks: &Arc<RwLock<Vec<Vec<String>>>>,
     bids: &Arc<RwLock<Vec<Vec<String>>>>,
 ) {
-    match strategy.as_str() {
+    match strategy {
         "break_of_structure" => {
-            // break_of_structure::test_for_break_of_structure(bucket_prices, &asks, &bids).await;
+            break_of_structure::test_for_break_of_structure(bucket_prices, &asks, &bids).await;
         }
         _ => {
             println!("Strategy {} not supported", strategy)

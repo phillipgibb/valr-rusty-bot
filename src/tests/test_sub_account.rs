@@ -7,9 +7,9 @@ mod tests {
     use futures_util::TryFutureExt;
     use log::error;
     use serde_json::{json, Value};
-    use valr_rusty_bot::helper::{create_http_request};
     use crate::config::{ConfigProvider, DotEnvConfigProvider};
     use crate::rusty_bot_models::SubAccountResponse;
+    use crate::strategies::break_of_structure::helper::create_http_request;
 
     #[tokio::test]
     async fn create_sub_account() -> Result<(), reqwest::Error> {
