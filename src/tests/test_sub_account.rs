@@ -8,9 +8,36 @@ mod tests {
     use log::error;
     use serde_json::{json, Value};
     use crate::config::{ConfigProvider, DotEnvConfigProvider};
-    use crate::rusty_bot_models::SubAccountResponse;
+    use crate::rusty_bot_models::{CurrencyPair, SubAccountResponse};
     use crate::strategies::break_of_structure::helper::create_http_request;
 
+    
+    #[test]
+    fn test_currency_pair_deserialize() {
+        let serialized= r#"
+        {
+            "symbol": "BTCZAR",
+            "baseCurrency": "BTC",
+            "quoteCurrency": "ZAR",
+            "shortName": "BTC/ZAR",
+            "active": true,
+            "minBaseAmount": "0.00001",
+            "maxBaseAmount": "3.89",
+            "minQuoteAmount": "20",
+            "maxQuoteAmount": "5000000",
+            "tickSize": "1",
+            "baseDecimalPlaces": "8",
+            "marginTradingAllowed": true,
+            "currencyPairType": "SPOT",
+            "initialMarginFraction": "0.2",
+            "maintenanceMarginFraction": "0.1",
+            "autoCloseMarginFraction": "0.033333333"
+        }
+        "#;
+        dbg!(serde_json::from_str::<CurrencyPair>(serialized)).expect("TODO: panic message");
+        
+    }
+    
     #[tokio::test]
     async fn create_sub_account() -> Result<(), reqwest::Error> {
         let env_config_provider = DotEnvConfigProvider::new();

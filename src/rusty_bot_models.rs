@@ -88,6 +88,40 @@ pub struct Currency {
     pub collateral_weight: String,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+pub struct CurrencyPair {
+    pub symbol: String,
+    #[serde(rename = "baseCurrency")]
+    pub base_currency: String,
+    #[serde(rename = "quoteCurrency")]
+    pub quote_currency: String,
+    #[serde(rename = "shortName")]
+    pub short_name: String,
+    pub active: bool,
+    #[serde(rename = "minBaseAmount")]
+    min_base_amount: String,
+    #[serde(rename = "maxBaseAmount")]
+    max_base_amount: String,
+    #[serde(rename = "minQuoteAmount")]
+    min_quote_amount: String,
+    #[serde(rename = "maxQuoteAmount")]
+    max_quote_amount: String,
+    #[serde(rename = "tickSize")]
+    tick_size: String,
+    #[serde(rename = "baseDecimalPlaces")]
+    base_decimal_places:String,
+    #[serde(rename = "marginTradingAllowed")]
+    margin_trading_allowed: bool,
+    #[serde(rename = "currencyPairType")]
+    currency_pair_type: String,
+    #[serde(rename = "initialMarginFraction")]
+    initial_margin_fraction: Option<String>,
+    #[serde(rename = "maintenanceMarginFraction")]
+    maintenance_margin_fraction: Option<String>,
+    #[serde(rename = "autoCloseMarginFraction")]
+    auto_close_margin_fraction: Option<String>
+}
+
 #[derive(Deserialize, Debug)]
 pub struct BalanceUpdate {
     pub currency: Currency,

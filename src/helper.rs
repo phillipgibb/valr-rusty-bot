@@ -7,7 +7,7 @@ use reqwest::RequestBuilder;
 use sha2::Sha512;
 use tokio::sync::RwLock;
 use tungstenite::client::IntoClientRequest;
-use crate::rusty_bot_models::MarkPriceBucket;
+use crate::rusty_bot_models::{BalanceUpdate, CurrencyPair, MarkPriceBucket};
 
 use crate::strategies::break_of_structure;
 
@@ -16,10 +16,12 @@ pub async fn execute_strategy(
     bucket_prices: Vec<MarkPriceBucket>,
     asks: &Arc<RwLock<Vec<Vec<String>>>>,
     bids: &Arc<RwLock<Vec<Vec<String>>>>,
+    balances: Arc<RwLock<Vec<BalanceUpdate>>>,
+    currency_pair: CurrencyPair
 ) {
     match strategy {
         "break_of_structure" => {
-            break_of_structure::test_for_break_of_structure(bucket_prices, &asks, &bids).await;
+            break_of_structure::test_for_break_of_structure(bucket_prices, &asks, &bids, balances, currency_pair).await;
         }
         _ => {
             println!("Strategy {} not supported", strategy)

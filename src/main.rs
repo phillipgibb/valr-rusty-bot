@@ -6,9 +6,9 @@ mod strategies;
 mod tests;
 
 use crate::config::{ConfigProvider, DotEnvConfigProvider};
-use crate::rusty_bot_models::WsMessage;
+use crate::rusty_bot_models::{CurrencyPair, WsMessage};
 use crate::strategies::break_of_structure::helper::{
-    create_http_request, create_ws_request, execute_strategy,
+    create_http_request, create_ws_request, execute_strategy, strip_slashes,
 };
 use chrono::{DateTime, Duration, Utc};
 use colored::Colorize;
@@ -19,6 +19,7 @@ use futures_util::{SinkExt, StreamExt};
 use http::Uri;
 use lazy_static::lazy_static;
 use log::{error, warn};
+use reqwest::Error;
 use rusty_bot_models::{
     AggregatedOrderBookUpdate, BalanceUpdate, DepthOrderBookSnapshot, MarkPriceBucket, Order,
     OrderBookData, TradePriceBucketUpdate,
@@ -41,6 +42,7 @@ lazy_static! {
     static ref BIDS: Arc<RwLock<Vec<Vec<String>>>> = Arc::new(RwLock::new(vec![]));
     static ref ASKS: Arc<RwLock<Vec<Vec<String>>>> = Arc::new(RwLock::new(vec![]));
     static ref ORDERS: Arc<RwLock<Vec<Order>>> = Arc::new(RwLock::new(vec![]));
+    static ref BALANCES: Arc<RwLock<Vec<BalanceUpdate>>> = Arc::new(RwLock::new(vec![]));
 }
 
 #[tokio::main]
@@ -51,6 +53,8 @@ async fn main() {
     env_logger::init();
     let current_date_time = Utc::now().naive_utc();
     let one_hour_ago_date_time = current_date_time - Duration::hours(1);
+    let currency_pair = get_currency_pair(config.market.clone()).await;
+    println!("{:?}", currency_pair);
     get_historical_sixty_second_mark_price_buckets_for_pair(
         &config.market,
         one_hour_ago_date_time.to_string(),
@@ -64,13 +68,17 @@ async fn main() {
     let mut trade_update_read_handles = subscribe_to_trade_updates(
         &config.api_key,
         &config.api_secret,
-        &config.market,
+        &currency_pair,
         config.strategy.clone(),
     )
     .await;
-    let mut account_handlers =
-        subscribe_to_account_updates(&config.api_key, &config.api_secret, config.strategy.clone())
-            .await;
+    let mut account_handlers = subscribe_to_account_updates(
+        &config.api_key,
+        &config.api_secret,
+        &currency_pair,
+        config.strategy.clone(),
+    )
+    .await;
     handles.append(&mut trade_update_read_handles);
     handles.append(&mut account_handlers);
 
@@ -82,6 +90,7 @@ async fn main() {
 async fn subscribe_to_account_updates(
     api_key: &str,
     api_secret: &str,
+    currency_pair: &CurrencyPair,
     strategy: String,
 ) -> Vec<JoinHandle<()>> {
     let url = Uri::from_str("wss://api.valr.com/ws/account");
@@ -99,7 +108,12 @@ async fn subscribe_to_account_updates(
         .expect("Error connecting to Account WebSocket");
     let (write, read) = ws_stream.split();
 
-    let account_handle = tokio::spawn(handle_ws_incoming_messages(read, strategy, "account"));
+    let account_handle = tokio::spawn(handle_ws_incoming_messages(
+        read,
+        strategy,
+        "account",
+        currency_pair.clone(),
+    ));
     let ping_handle = create_ping_thread(write, Utc::now(), String::from("Account WS"));
 
     vec![account_handle, ping_handle]
@@ -108,7 +122,7 @@ async fn subscribe_to_account_updates(
 async fn subscribe_to_trade_updates(
     api_key: &str,
     api_secret: &str,
-    pair_symbol: &str,
+    currency_pair: &CurrencyPair,
     strategy: String,
 ) -> Vec<JoinHandle<()>> {
     let url = Uri::from_str("wss://api.valr.com/ws/trade");
@@ -118,11 +132,11 @@ async fn subscribe_to_trade_updates(
         "subscriptions": [
             {
                 "event": "NEW_TRADE_BUCKET",
-                "pairs": [format!("{}", pair_symbol)]
+                "pairs": [format!("{}", currency_pair.symbol)]
             },
             {
                 "event": "OB_L1_D10_SNAPSHOT",
-                "pairs": [format!("{}", pair_symbol)]
+                "pairs": [format!("{}", currency_pair.symbol)]
             },
             {
                 "event": "NEW_TRADE"
@@ -132,11 +146,11 @@ async fn subscribe_to_trade_updates(
             }
             // {
             //     "event": "FULL_ORDERBOOK_UPDATE",
-            //     "pairs": [format!("{}", pair_symbol)]
+            //     "pairs": [format!("{}", currency_pair)]
             // },
             // {
             //     "event": "AGGREGATED_ORDERBOOK_UPDATE",
-            //     "pairs": [format!("{}", pair_symbol)]
+            //     "pairs": [format!("{}", currency_pair)]
             // },
 
         ]
@@ -148,7 +162,12 @@ async fn subscribe_to_trade_updates(
         .expect("Error connecting to Trade WebSocket");
 
     let (mut write, read) = ws_stream.split();
-    let subscribe_handle = tokio::spawn(handle_ws_incoming_messages(read, strategy, "trade"));
+    let subscribe_handle = tokio::spawn(handle_ws_incoming_messages(
+        read,
+        strategy,
+        "trade",
+        currency_pair.clone(),
+    ));
 
     write
         .send(Message::from(message.to_string()))
@@ -175,10 +194,7 @@ fn create_ping_thread(
                     "type": "PING"
                 });
 
-                match write
-                    .send(Message::from(ping_message.to_string()))
-                    .await
-                {
+                match write.send(Message::from(ping_message.to_string())).await {
                     Ok(i) => {
                         println!(
                             "{}| {} Ping {}",
@@ -200,6 +216,7 @@ async fn handle_ws_incoming_messages(
     mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     strategy: String,
     subscription_type: &str,
+    currency_pair: CurrencyPair,
 ) {
     while let Some(message) = read.next().await {
         match message {
@@ -209,22 +226,36 @@ async fn handle_ws_incoming_messages(
                 match ws_message {
                     Ok(serialized) => match serialized {
                         WsMessage::BalanceUpdate(balance_update) => {
-                            handle_balance_update(*balance_update)
+                            handle_balance_update(*balance_update).await
                         }
                         WsMessage::OpenOrdersUpdate(order_update) => {
-                            handle_order_update(order_update)
+                            handle_order_update(order_update).await
                         }
                         WsMessage::NewTradeBucket(trade_price_bucket_update) => {
                             handle_trade_price_bucket_update(
                                 *trade_price_bucket_update,
                                 strategy.clone(),
+                                currency_pair.clone(),
+                                BALANCES.clone(),
                             )
                             .await;
                         }
-                        WsMessage::OrderbookLvOneDepthOneSnapshot(ob) => {}
-                        WsMessage::OrderbookLvOneDepthTenSnapshot(ob) => {}
+                        WsMessage::OrderbookLvOneDepthOneSnapshot(ob) => {
+                            println!(
+                                "{}| OrderbookLvOneDepthOneSnapshot {}",
+                                current_time.to_rfc3339().blue(),
+                                text.green()
+                            )
+                        }
+                        WsMessage::OrderbookLvOneDepthTenSnapshot(ob) => {
+                            handle_orderbook_level_one_depth_ten_snapshot_update(*ob).await
+                        }
                         WsMessage::Subscribed => {
-                            println!("{}| Subscribed {}", current_time.to_rfc3339().blue(), text.green())
+                            println!(
+                                "{}| Subscribed {}",
+                                current_time.to_rfc3339().blue(),
+                                text.green()
+                            )
                         }
                         WsMessage::Authenticated => {
                             println!("{}| Authenticated", current_time.to_rfc3339().blue())
@@ -267,13 +298,9 @@ async fn handle_ws_incoming_messages(
     }
 }
 
-fn handle_order_update(order: Vec<Order>) {
-    println!();
-    println!("OPEN ORDERS UPDATE: {:?}", order);
-    println!();
-}
-
-async fn handle_orderbook_level_1_depth_1_snapshot_update(orderbook_data: DepthOrderBookSnapshot) {
+async fn handle_orderbook_level_one_depth_ten_snapshot_update(
+    orderbook_data: DepthOrderBookSnapshot,
+) {
     // Access parsed fields from the struct
     // println!("Last Change: {}", orderbook_data.last_change);
     // Iterate over Asks and Bids
@@ -298,6 +325,8 @@ async fn handle_orderbook_level_1_depth_1_snapshot_update(orderbook_data: DepthO
 async fn handle_trade_price_bucket_update(
     trade_price_bucket_update: TradePriceBucketUpdate,
     strategy: String,
+    currency_pair: CurrencyPair,
+    balances: Arc<RwLock<Vec<BalanceUpdate>>>,
 ) {
     if trade_price_bucket_update.bucket_period_in_seconds != 60 {
         //300
@@ -377,7 +406,15 @@ async fn handle_trade_price_bucket_update(
         // let bpr = &c_lock.read().await;
         let bpr = BUCKET_PRICES.read().await;
 
-        execute_strategy(strategy.clone().as_str(), bpr.to_vec(), &ASKS, &BIDS).await;
+        execute_strategy(
+            strategy.clone().as_str(),
+            bpr.to_vec(),
+            &ASKS,
+            &BIDS,
+            balances,
+            currency_pair,
+        )
+        .await;
     });
 }
 
@@ -409,12 +446,42 @@ fn handle_aggregated_orderbook_update(aggregated_orderbook_update: AggregatedOrd
     }
 }
 
-fn handle_balance_update(balance_update: BalanceUpdate) {
+async fn handle_order_update(orders: Vec<Order>) {
+    println!();
+    println!("OPEN ORDERS UPDATE: {:?}", orders);
+    let mut orders_writer = ORDERS.write().await;
+    for ask in orders {
+        orders_writer.push(ask);
+    }
+    drop(orders_writer);
+    println!();
+}
+
+async fn handle_balance_update(balance_update: BalanceUpdate) {
     println!(
         "{}: {}",
         balance_update.currency.symbol.bright_green(),
         balance_update.available.bright_blue()
     );
+
+    let balances_reader = BALANCES.read().await;
+    let position = {
+        balances_reader
+            .iter()
+            .position(|b| b.currency.symbol == balance_update.currency.symbol)
+    };
+    drop(balances_reader);
+    let mut balances_writer = BALANCES.write().await;
+
+    match position {
+        None => {
+            balances_writer.push(balance_update);
+        }
+        Some(pos) => {
+            balances_writer[pos] = balance_update;
+        }
+    }
+    drop(balances_writer);
 }
 
 fn handle_orderbook_snapshot(orderbook_data: OrderBookData) {
@@ -466,6 +533,35 @@ async fn get_historical_sixty_second_mark_price_buckets_for_pair(
     .await
     .expect("The spawned task to read Bucket prices has panicked");
     Ok(())
+}
+
+async fn get_currency_pair(currency_pair: String) -> CurrencyPair {
+    let request_url = String::from("https://api.valr.com/v1/public/pairs");
+    let client = reqwest::Client::new();
+    let response = client.get(request_url).send().await;
+
+    match response {
+        Ok(_response) => {
+            let pairs: Result<Vec<CurrencyPair>, Error> = _response.json().await;
+            match pairs {
+                Ok(_pairs) => {
+                    let pair = _pairs.iter().clone().find(|p| p.symbol.eq(&currency_pair));
+                    match pair {
+                        None => {
+                            panic!("Currency pair: {} cannot be found", currency_pair)
+                        }
+                        Some(_pair) => _pair.clone() ,
+                    }
+                }
+                Err(_e) => {
+                    panic!("Currency pair: {} cannot be found: {}", currency_pair, _e)
+                }
+            }
+        }
+        Err(_e) => {
+            panic!("Currency pair: {} cannot be found: {}", currency_pair, _e)
+        }
+    }
 }
 
 //Not necessary because the first subscription always returns all the open orders

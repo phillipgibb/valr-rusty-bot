@@ -1,5 +1,3 @@
-use std::ops::Deref;
-
 pub trait ConfigProvider {
     fn get_config(&self) -> &Config;
 }

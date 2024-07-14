@@ -1,16 +1,22 @@
 // #[path = "../rusty_bot_models.rs"]
 // pub mod rusty_bot_models;
 
-use std::sync::Arc;
 use log::warn;
+use std::sync::Arc;
 
-use tokio::sync::{RwLock};
-use crate::rusty_bot_models::MarkPriceBucket;
+use crate::rusty_bot_models::{BalanceUpdate, CurrencyPair, MarkPriceBucket};
+use tokio::sync::RwLock;
 
 #[path = "../helper.rs"]
 pub mod helper;
 
-pub async fn test_for_break_of_structure(bucket_prices: Vec<MarkPriceBucket>, asks: &Arc<RwLock<Vec<Vec<String>>>>, bids: &Arc<RwLock<Vec<Vec<String>>>>) {
+pub async fn test_for_break_of_structure(
+    bucket_prices: Vec<MarkPriceBucket>,
+    asks: &Arc<RwLock<Vec<Vec<String>>>>,
+    bids: &Arc<RwLock<Vec<Vec<String>>>>,
+    balances: Arc<RwLock<Vec<BalanceUpdate>>>,
+    currency_pair: CurrencyPair,
+) {
     let width = 3; //width of the spread under consideration
     let length = (width * 2) + 1;
     if bucket_prices.is_empty() {
@@ -20,16 +26,42 @@ pub async fn test_for_break_of_structure(bucket_prices: Vec<MarkPriceBucket>, as
 
     let asks_reader = asks.read().await;
     let bids_reader = bids.read().await;
+    let balances_reader = balances.read().await;
 
-    if asks_reader.is_empty()  || bids_reader.is_empty(){
-        warn!("No Asks or Bids available");
+    if asks_reader.is_empty() || bids_reader.is_empty() || balances_reader.is_empty() {
+        warn!("No Asks or Bids or balance available");
         return;
     }
+    let balance_update_quote_total = &balances_reader
+        .iter()
+        .find(|b| b.currency.symbol == currency_pair.quote_currency)
+        .map(|b| b.total.parse::<f64>());
+    let balance_update_base_total = &balances_reader
+        .iter()
+        .find(|b| b.currency.symbol == currency_pair.base_currency)
+        .map(|b| b.total.parse::<f64>());
+
+    let balance_update_quote_total = match  balance_update_quote_total.clone() {
+        None => 0f64,
+        Some(_qa) => _qa.unwrap() 
+    };
+
+    let balance_update_base_total = match balance_update_base_total {
+        None => 0f64,
+        Some(_qa) => _qa.clone().unwrap()
+    };
+
     let best_ask = asks_reader.first().unwrap();
     let best_bid = bids_reader.first().unwrap();
 
     let current_index = bucket_prices.len() - width - 1;
     let previous_close = bucket_prices.last().unwrap().close;
+
+    let swing_high: f64 = -1.0f64;
+    let swing_low: f64 = -1.0f64;
+
+    let best_bid_price = &best_bid[0].parse::<f64>().unwrap();
+    let best_ask_price = &best_ask[0].parse::<f64>().unwrap();
 
     for i in 1..width {
         let left_neighbor_index = current_index - i;
@@ -55,20 +87,8 @@ pub async fn test_for_break_of_structure(bucket_prices: Vec<MarkPriceBucket>, as
 
         let is_low_swing = !(current_low >= left_low || right_low > current_low);
 
-        let swing_high: f64 = if is_high_swing {
-            current_high
-        } else {
-            -1.0f64
-        };
-        let swing_low: f64 = if is_low_swing {
-            current_low
-        } else {
-            -1.0
-        };
-
-        
-        let best_bid_price = &best_bid[0].parse::<f64>().unwrap();
-        let best_ask_price = &best_ask[0].parse::<f64>().unwrap();
+        let swing_high: f64 = if is_high_swing { current_high } else { -1.0f64 };
+        let swing_low: f64 = if is_low_swing { current_low } else { -1.0 };
 
         if is_high_swing {
             println!("IS HIGH SWING");
@@ -139,18 +159,38 @@ pub async fn test_for_break_of_structure(bucket_prices: Vec<MarkPriceBucket>, as
             );
             println!();
         }
-
-        if swing_high > 0f64 && best_bid_price > &swing_high && previous_close > swing_high {
-            buy(*best_ask_price, best_ask[1].clone()).await;
-        } else if swing_low > 0f64 && *best_ask_price < swing_low && previous_close < swing_low {
-            sell(*best_bid_price, best_bid[1].clone()).await;
-        }
+    }
+    if swing_high > 0f64 && best_bid_price > &swing_high && previous_close > swing_high {
+        buy(
+            *best_ask_price,
+            best_ask[1].clone(),
+            currency_pair,
+            balance_update_quote_total,
+        )
+        .await;
+    } else if swing_low > 0f64 && *best_ask_price < swing_low && previous_close < swing_low {
+        sell(
+            *best_bid_price,
+            best_bid[1].clone(),
+            currency_pair,
+            balance_update_base_total,
+        )
+        .await;
     }
     drop(bids_reader);
     drop(asks_reader);
 }
 
-async fn sell(best_bid_price: f64, quantity: String) {
+async fn sell(
+    best_bid_price: f64,
+    quantity: String,
+    currency_pair: CurrencyPair,
+    balance_update_base_total: f64,
+) {
+    println!(
+        "Total {}: {}",
+        currency_pair.base_currency, balance_update_base_total
+    );
     println!(
         "Place SELL at price: {} and quantity: {}",
         best_bid_price, quantity
@@ -158,7 +198,17 @@ async fn sell(best_bid_price: f64, quantity: String) {
     //drop sells?
 }
 
-async fn buy(best_ask_price: f64, quantity: String) {
+async fn buy(
+    best_ask_price: f64,
+    quantity: String,
+    currency_pair: CurrencyPair,
+    balance_update_quote_total: f64,
+) {
+
+    println!(
+        "Total {}: {}",
+        currency_pair.quote_currency, balance_update_quote_total
+    );
     println!(
         "Place SELL at price: {} and quantity: {}",
         best_ask_price, quantity
