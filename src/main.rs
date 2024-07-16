@@ -31,7 +31,7 @@ use std::string::String;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, yield_now};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tungstenite::http;
 
@@ -208,6 +208,7 @@ fn create_ping_thread(
                     }
                 }
             };
+            yield_now().await
         }
     })
 }
