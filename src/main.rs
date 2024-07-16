@@ -10,10 +10,9 @@ use crate::rusty_bot_models::{CurrencyPair, WsMessage};
 use crate::strategies::break_of_structure::helper::{
     create_http_request, create_ws_request, execute_strategy, strip_slashes,
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration as crono_time, Utc};
 use colored::Colorize;
 use convert_case::{Case, Casing};
-use futures_util::future::try_join_all;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use http::Uri;
@@ -31,9 +30,11 @@ use std::string::String;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, yield_now};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tungstenite::http;
+use std::time::Duration;
+use futures_util::future::try_join_all;
 
 const FIVE_MINUTE_BUCKET_SECONDS: &str = "300";
 
@@ -48,11 +49,19 @@ lazy_static! {
 #[tokio::main]
 async fn main() {
     println!("Hello, VALR Rusty Trader!");
+    // console_subscriber::init();
+    console_subscriber::ConsoleLayer::builder()
+        // set how long the console will retain data from completed tasks
+        .retention(Duration::from_secs(60))
+        // set the address the server is bound to
+        // .server_addr(([127, 0, 0, 1], 6669))
+        // ... other configurations ...
+        .init();
     let env_config_provider = DotEnvConfigProvider::new();
     let config = env_config_provider.get_config();
     env_logger::init();
     let current_date_time = Utc::now().naive_utc();
-    let one_hour_ago_date_time = current_date_time - Duration::hours(1);
+    let one_hour_ago_date_time = current_date_time - crono_time::hours(1);
     let currency_pair = get_currency_pair(config.market.clone()).await;
     println!("{:?}", currency_pair);
     get_historical_sixty_second_mark_price_buckets_for_pair(
@@ -208,6 +217,7 @@ fn create_ping_thread(
                     }
                 }
             };
+            yield_now().await;
         }
     })
 }
